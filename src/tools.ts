@@ -47,13 +47,13 @@ export function registerTools(server: McpServer, client: GreenInvoiceClient) {
   server.tool(
     "account",
     `Get account information.
-Actions: "get" = account info (GET /account/me), "settings" = account settings (GET /account/settings).`,
+Actions: "get" = current business info (GET /businesses/me) — sufficient for "who am I" / connection verification.
+Note: there is no public-API "settings" action; /account/me is web-session only (403 for API keys) and /account/settings does not exist (404).`,
     {
-      action: z.enum(["get", "settings"]).describe("Action to perform"),
+      action: z.enum(["get"]).describe("Action to perform"),
     },
-    async ({ action }) => {
-      const path = action === "settings" ? "/account/settings" : "/account/me";
-      return json(await client.get(path));
+    async () => {
+      return json(await client.get("/businesses/me"));
     }
   );
 
