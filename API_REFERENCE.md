@@ -1,9 +1,20 @@
 # Green Invoice API Reference
 
-> Source: [Apiary Blueprint](https://jsapi.apiary.io/apis/greeninvoice.json) | Last updated: 2026-03-11  
-> Production base: `https://api.greeninvoice.co.il/api/v1/`  
-> Sandbox base: `https://sandbox.d.greeninvoice.co.il/api/v1/`  
+> Source: [Apiary Blueprint](https://jsapi.apiary.io/apis/greeninvoice.json) | Last updated: 2026-03-11
+> Production base: `https://api.greeninvoice.co.il/api/v1/`
+> Sandbox base: `https://sandbox.d.greeninvoice.co.il/api/v1/` — mirrors every path below, but is a **separate tenancy: production keys get `401` there**. See [docs/sandbox.md](docs/sandbox.md).
 > Reference data base: `https://cache.greeninvoice.co.il/`
+
+## Representative business context
+
+Morning's web application has been observed targeting another business while
+retaining the representative's bearer token by sending the business UUID in
+the `X-Resource-Id` header. A read-only sandbox check on 2026-07-29 confirmed
+that the header is accepted by `/businesses/me` and `/documents/search`.
+
+This header is not described in the current public API reference, so it should
+be treated as an unofficial capability. It is also separate from the public
+Partners API described below.
 
 ## Endpoints (66 total)
 
@@ -103,6 +114,12 @@
 | POST | /payments/tokens/{id}/charge | Charge credit card token |
 
 ### Partners (4)
+
+These endpoints use partner-level **Basic** authentication, not the business
+bearer token used by the other endpoints. `GET /partners/users` returns masked
+user IDs and emails only. On approval, the connection callback delivers a new
+API key for the connected user; there is no documented endpoint that later
+returns that key or a client access token.
 
 | Method | Path | Description |
 |--------|------|-------------|
