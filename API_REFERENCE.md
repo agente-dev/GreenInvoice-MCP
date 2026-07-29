@@ -16,6 +16,11 @@ This header is not described in the current public API reference, so it should
 be treated as an unofficial capability. It is also separate from the public
 Partners API described below.
 
+In this MCP, authenticated tools accept a top-level `resourceId` so stateless
+transports can carry the business UUID on each call. The older `select` actions
+remain convenient for long-lived MCP processes, but their in-memory selection
+does not survive a process restart.
+
 ## Endpoints (66 total)
 
 ### Businesses (10)

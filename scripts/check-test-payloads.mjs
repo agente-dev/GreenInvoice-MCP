@@ -94,5 +94,14 @@ check("clientEmails passed through", Array.isArray(overridden.client.emails));
 check("addClient false disables auto-create",
   buildTestDocument({ addClient: false }).client.add === false);
 
+let invalidNumberRejected = false;
+try {
+  buildTestDocument({ price: "not-a-number" });
+} catch (error) {
+  invalidNumberRejected =
+    error instanceof Error && error.message.includes("'price' must be a finite number");
+}
+check("invalid numeric input gets a clear validation error", invalidNumberRejected);
+
 console.log(failures === 0 ? "\nAll payload checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

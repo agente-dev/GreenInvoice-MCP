@@ -137,9 +137,11 @@ If you cloned the repo locally:
 }
 ```
 
-## Available Tools (11 consolidated tools, 66 endpoints)
+## Available Tools (12 consolidated tools, 66 endpoints)
 
-Each tool uses an `action` parameter to select the operation, and a `data` JSON string for request parameters.
+Each tool uses an `action` parameter to select the operation, and a `data` JSON
+string for request parameters. Authenticated tools also accept a top-level
+`resourceId` business UUID for that individual call.
 
 | Tool | Actions | Description |
 |------|---------|-------------|
@@ -153,6 +155,7 @@ Each tool uses an `action` parameter to select the operation, and a `data` JSON 
 | `payment` | get_form, search_tokens, charge_token, create_link, get_link, get_link_status | Online payments and payment links |
 | `webhook` | create, get, delete | Webhook subscriptions |
 | `reference_data` | occupations, countries, cities, currencies | Reference/lookup data (no auth required) |
+| `partner` | list, connect, find, disconnect | Deprecated compatibility shim; use `business` for already-authorized businesses |
 | `sandbox` | status, list_businesses, select_business, clear_business, create_test_document, seed, create_document, preview_document, get_document, search_documents, download_links, create_test_client, search_clients, request | Test documents and representative business switching in the sandbox environment |
 
 ## CPA / representative business switching
@@ -167,15 +170,27 @@ accepted by `GET /businesses/me` and `POST /documents/search`.
 Treat this as an observed, unofficial capability that Morning may change.
 
 Use `business list` to discover the businesses available to the authenticated
-account, then `business select` with:
+account. For a stateless MCP transport (including one that starts a new process
+for every tool call), pass the returned UUID as the top-level `resourceId` on
+every scoped call:
 
 ```json
-{"businessId":"00000000-0000-0000-0000-000000000000"}
+{
+  "action": "search",
+  "data": "{\"page\":1,\"pageSize\":25}",
+  "resourceId": "00000000-0000-0000-0000-000000000000"
+}
 ```
 
-Every subsequent authenticated tool call carries that business UUID in
-`X-Resource-Id`. Use `business get_selection` to inspect the current context and
-`business clear_selection` to return to the API key's default business.
+That individual request carries the UUID in `X-Resource-Id` while reusing the
+same cached authorization token. The explicit argument does not rely on state
+from a previous MCP call.
+
+Long-lived MCP sessions may instead use `business select` with
+`data: {"businessId":"..."}`. Every subsequent authenticated tool call in that
+same process carries the selected UUID. Use `business get_selection` to inspect
+that in-process context and `business clear_selection` to return to the API
+key's default business. Do not rely on `select` across process restarts.
 
 The sandbox tool has equivalent `list_businesses`, `select_business`, and
 `clear_business` actions. Production and sandbox clients keep independent
@@ -206,7 +221,7 @@ and set `GREENINVOICE_SANDBOX_API_ID` / `GREENINVOICE_SANDBOX_API_SECRET`.
 
 Once configured, the `sandbox` tool's client is bound to the sandbox base URL at
 construction and has no code path to production -- it cannot write to the real
-books whatever arguments it is given. The other ten tools stay on production.
+books whatever arguments it is given. The other eleven tools stay on production.
 
 Start with `sandbox status`, which reports whether credentials are configured
 and verifies them without throwing. Then:

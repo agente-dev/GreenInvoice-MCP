@@ -28,6 +28,13 @@ function parseData(raw?: string): unknown {
   }
 }
 
+const resourceIdInput = z
+  .string()
+  .optional()
+  .describe(
+    "Business UUID to send as X-Resource-Id for this call. Pass it on every call when the MCP transport is stateless or starts a new process per tool call."
+  );
+
 function getBusinessId(data: Record<string, unknown> | undefined): string {
   const value = data?.businessId ?? data?.id;
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -80,6 +87,14 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function finiteNumber(value: unknown, field: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`'${field}' must be a finite number`);
+  }
+  return parsed;
+}
+
 /**
  * Expand a minimal spec into a complete, valid document payload.
  *
@@ -88,9 +103,9 @@ function today(): string {
  * body should use the `create_document` action instead.
  */
 export function buildTestDocument(data: Record<string, unknown> = {}): Record<string, unknown> {
-  const type = Number(data.type ?? 305);
-  const price = Number(data.price ?? 100);
-  const quantity = Number(data.quantity ?? 1);
+  const type = finiteNumber(data.type ?? 305, "type");
+  const price = finiteNumber(data.price ?? 100, "price");
+  const quantity = finiteNumber(data.quantity ?? 1, "quantity");
   const currency = (data.currency as string) ?? "ILS";
   const date = (data.date as string) ?? today();
 
@@ -113,7 +128,7 @@ export function buildTestDocument(data: Record<string, unknown> = {}): Record<st
         quantity,
         price,
         currency,
-        vatType: Number(data.vatType ?? 0),
+        vatType: finiteNumber(data.vatType ?? 0, "vatType"),
       },
     ],
   };
@@ -127,8 +142,8 @@ export function buildTestDocument(data: Record<string, unknown> = {}): Record<st
     doc.payment = [
       {
         date,
-        type: Number(data.paymentType ?? 4),
-        price: Number(data.paymentAmount ?? price * quantity),
+        type: finiteNumber(data.paymentType ?? 4, "paymentType"),
+        price: finiteNumber(data.paymentAmount ?? price * quantity, "paymentAmount"),
         currency,
       },
     ];
@@ -157,9 +172,10 @@ Actions: "get" = current business info (GET /businesses/me) — sufficient for "
 Note: there is no public-API "settings" action; /account/me is web-session only (403 for API keys) and /account/settings does not exist (404).`,
     {
       action: z.enum(["get"]).describe("Action to perform"),
+      resourceId: resourceIdInput,
     },
-    async () => {
-      return json(await client.get("/businesses/me"));
+    async ({ resourceId }) => {
+      return json(await client.get("/businesses/me", resourceId));
     }
   );
 
@@ -172,6 +188,7 @@ Note: there is no public-API "settings" action; /account/me is web-session only 
 "select" = select a business for subsequent calls without changing the authorization token (data: {"businessId":"..."}). Sends the UUID as X-Resource-Id and verifies it with GET /businesses/me.
 "get_selection" = return the currently selected X-Resource-Id business context
 "clear_selection" = return to the API key's default business context
+"resourceId" (top-level tool argument) = use a business UUID for this call. This is the reliable option for stateless clients; pass it again on every subsequent tool call.
 "get" = get current business (GET /businesses/me) or by id (data: {"id":"..."})
 "update" = update business (data: JSON of fields to update)
 "get_numbering" = get document numbering (GET /businesses/numbering)
@@ -184,12 +201,13 @@ Note: there is no public-API "settings" action; /account/me is web-session only 
       action: z.enum(["list", "select", "get_selection", "clear_selection", "get", "update", "get_numbering", "set_numbering", "get_footer", "get_types", "upload_file", "delete_file"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters (see action descriptions)"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       switch (action) {
         case "list":
-          return json(await client.get("/businesses"));
+          return json(await client.get("/businesses", resourceId));
         case "select":
           return json(await selectBusiness(client, data));
         case "get_selection":
@@ -204,24 +222,24 @@ Note: there is no public-API "settings" action; /account/me is web-session only 
         }
         case "get": {
           const id = data?.id as string | undefined;
-          return json(await client.get(id ? `/businesses/${id}` : "/businesses/me"));
+          return json(await client.get(id ? `/businesses/${id}` : "/businesses/me", resourceId));
         }
         case "update":
-          return json(await client.put("/businesses", data));
+          return json(await client.put("/businesses", data, resourceId));
         case "get_numbering":
-          return json(await client.get("/businesses/numbering"));
+          return json(await client.get("/businesses/numbering", resourceId));
         case "set_numbering":
-          return json(await client.put("/businesses/numbering", data));
+          return json(await client.put("/businesses/numbering", data, resourceId));
         case "get_footer":
-          return json(await client.get("/businesses/footer"));
+          return json(await client.get("/businesses/footer", resourceId));
         case "get_types": {
           const lang = data?.lang ? `?lang=${data.lang}` : "";
-          return json(await client.get(`/businesses/types${lang}`));
+          return json(await client.get(`/businesses/types${lang}`, resourceId));
         }
         case "upload_file":
-          return json(await client.post("/businesses/file", data));
+          return json(await client.post("/businesses/file", data, resourceId));
         case "delete_file":
-          return json(await client.request("DELETE", "/businesses/file", data));
+          return json(await client.request("DELETE", "/businesses/file", data, resourceId));
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -254,59 +272,60 @@ Actions:
       action: z.enum(["search", "get", "create", "update", "close", "open", "send", "download_links", "add_payment", "preview", "get_linked", "get_info", "get_types", "get_statuses", "search_payments"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "search":
-          return json(await client.post("/documents/search", data));
+          return json(await client.post("/documents/search", data, resourceId));
         case "get":
-          return json(await client.get(`/documents/${id}`));
+          return json(await client.get(`/documents/${id}`, resourceId));
         case "create": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post("/documents", body));
+          return json(await client.post("/documents", body, resourceId));
         }
         case "update": {
           const body = { ...data };
           delete body.id;
-          return json(await client.put(`/documents/${id}`, body));
+          return json(await client.put(`/documents/${id}`, body, resourceId));
         }
         case "close":
-          return json(await client.post(`/documents/${id}/close`));
+          return json(await client.post(`/documents/${id}/close`, undefined, resourceId));
         case "open":
-          return json(await client.post(`/documents/${id}/open`));
+          return json(await client.post(`/documents/${id}/open`, undefined, resourceId));
         case "send": {
           const body: Record<string, unknown> = {};
           if (data?.email) body.email = data.email;
-          return json(await client.post(`/documents/${id}/send`, body));
+          return json(await client.post(`/documents/${id}/send`, body, resourceId));
         }
         case "download_links":
-          return json(await client.get(`/documents/${id}/download/links`));
+          return json(await client.get(`/documents/${id}/download/links`, resourceId));
         case "add_payment": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post(`/documents/${id}/payment`, body));
+          return json(await client.post(`/documents/${id}/payment`, body, resourceId));
         }
         case "preview":
-          return json(await client.post("/documents/preview", data));
+          return json(await client.post("/documents/preview", data, resourceId));
         case "get_linked":
-          return json(await client.get(`/documents/${id}/linked`));
+          return json(await client.get(`/documents/${id}/linked`, resourceId));
         case "get_info": {
           const type = data?.type;
-          return json(await client.get(`/documents/info?type=${type}`));
+          return json(await client.get(`/documents/info?type=${type}`, resourceId));
         }
         case "get_types": {
           const lang = data?.lang ? `?lang=${data.lang}` : "";
-          return json(await client.get(`/documents/types${lang}`));
+          return json(await client.get(`/documents/types${lang}`, resourceId));
         }
         case "get_statuses": {
           const lang = data?.lang ? `?lang=${data.lang}` : "";
-          return json(await client.get(`/documents/statuses${lang}`));
+          return json(await client.get(`/documents/statuses${lang}`, resourceId));
         }
         case "search_payments":
-          return json(await client.post("/documents/payments/search", data));
+          return json(await client.post("/documents/payments/search", data, resourceId));
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -330,38 +349,39 @@ Actions:
       action: z.enum(["search", "get", "create", "update", "delete", "associate_docs", "merge", "update_balance"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "search":
-          return json(await client.post("/clients/search", data));
+          return json(await client.post("/clients/search", data, resourceId));
         case "get":
-          return json(await client.get(`/clients/${id}`));
+          return json(await client.get(`/clients/${id}`, resourceId));
         case "create": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post("/clients", body));
+          return json(await client.post("/clients", body, resourceId));
         }
         case "update": {
           const body = { ...data };
           delete body.id;
-          return json(await client.put(`/clients/${id}`, body));
+          return json(await client.put(`/clients/${id}`, body, resourceId));
         }
         case "delete":
-          return json(await client.delete(`/clients/${id}`));
+          return json(await client.delete(`/clients/${id}`, resourceId));
         case "associate_docs": {
           const ids = data?.ids;
-          return json(await client.post(`/clients/${id}/assoc`, { ids }));
+          return json(await client.post(`/clients/${id}/assoc`, { ids }, resourceId));
         }
         case "merge": {
           const mergeId = data?.mergeId;
-          return json(await client.post(`/clients/${id}/merge`, { mergeId }));
+          return json(await client.post(`/clients/${id}/merge`, { mergeId }, resourceId));
         }
         case "update_balance": {
           const balance = data?.balance;
-          return json(await client.post(`/clients/${id}/balance`, { balance }));
+          return json(await client.post(`/clients/${id}/balance`, { balance }, resourceId));
         }
         default:
           throw new Error(`Unknown action: ${action}`);
@@ -384,30 +404,31 @@ Actions:
       action: z.enum(["search", "get", "create", "update", "delete", "merge"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "search":
-          return json(await client.post("/suppliers/search", data));
+          return json(await client.post("/suppliers/search", data, resourceId));
         case "get":
-          return json(await client.get(`/suppliers/${id}`));
+          return json(await client.get(`/suppliers/${id}`, resourceId));
         case "create": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post("/suppliers", body));
+          return json(await client.post("/suppliers", body, resourceId));
         }
         case "update": {
           const body = { ...data };
           delete body.id;
-          return json(await client.put(`/suppliers/${id}`, body));
+          return json(await client.put(`/suppliers/${id}`, body, resourceId));
         }
         case "delete":
-          return json(await client.delete(`/suppliers/${id}`));
+          return json(await client.delete(`/suppliers/${id}`, resourceId));
         case "merge": {
           const mergeId = data?.mergeId;
-          return json(await client.post(`/suppliers/${id}/merge`, { mergeId }));
+          return json(await client.post(`/suppliers/${id}/merge`, { mergeId }, resourceId));
         }
         default:
           throw new Error(`Unknown action: ${action}`);
@@ -429,27 +450,28 @@ Actions:
       action: z.enum(["search", "get", "create", "update", "delete"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "search":
-          return json(await client.post("/items/search", data));
+          return json(await client.post("/items/search", data, resourceId));
         case "get":
-          return json(await client.get(`/items/${id}`));
+          return json(await client.get(`/items/${id}`, resourceId));
         case "create": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post("/items", body));
+          return json(await client.post("/items", body, resourceId));
         }
         case "update": {
           const body = { ...data };
           delete body.id;
-          return json(await client.put(`/items/${id}`, body));
+          return json(await client.put(`/items/${id}`, body, resourceId));
         }
         case "delete":
-          return json(await client.delete(`/items/${id}`));
+          return json(await client.delete(`/items/${id}`, resourceId));
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -480,37 +502,38 @@ Actions:
       action: z.enum(["search", "get", "create", "update", "delete", "open", "close", "get_statuses", "get_classifications", "search_drafts"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "search":
-          return json(await client.post("/expenses/search", data));
+          return json(await client.post("/expenses/search", data, resourceId));
         case "get":
-          return json(await client.get(`/expenses/${id}`));
+          return json(await client.get(`/expenses/${id}`, resourceId));
         case "create": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post("/expenses", body));
+          return json(await client.post("/expenses", body, resourceId));
         }
         case "update": {
           const body = { ...data };
           delete body.id;
-          return json(await client.put(`/expenses/${id}`, body));
+          return json(await client.put(`/expenses/${id}`, body, resourceId));
         }
         case "delete":
-          return json(await client.delete(`/expenses/${id}`));
+          return json(await client.delete(`/expenses/${id}`, resourceId));
         case "open":
-          return json(await client.post(`/expenses/${id}/open`));
+          return json(await client.post(`/expenses/${id}/open`, undefined, resourceId));
         case "close":
-          return json(await client.post(`/expenses/${id}/close`));
+          return json(await client.post(`/expenses/${id}/close`, undefined, resourceId));
         case "get_statuses":
-          return json(await client.get("/expenses/statuses"));
+          return json(await client.get("/expenses/statuses", resourceId));
         case "get_classifications":
-          return json(await client.get("/accounting/classifications/map"));
+          return json(await client.get("/accounting/classifications/map", resourceId));
         case "search_drafts":
-          return json(await client.post("/expenses/drafts/search", data));
+          return json(await client.post("/expenses/drafts/search", data, resourceId));
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -534,26 +557,27 @@ Actions:
       action: z.enum(["get_form", "search_tokens", "charge_token", "create_link", "get_link", "get_link_status"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "get_form":
-          return json(await client.post("/payments/form", data));
+          return json(await client.post("/payments/form", data, resourceId));
         case "search_tokens":
-          return json(await client.post("/payments/tokens/search", data));
+          return json(await client.post("/payments/tokens/search", data, resourceId));
         case "charge_token": {
           const body = { ...data };
           delete body.id;
-          return json(await client.post(`/payments/tokens/${id}/charge`, body));
+          return json(await client.post(`/payments/tokens/${id}/charge`, body, resourceId));
         }
         case "create_link":
-          return json(await client.post("/payment/links", data));
+          return json(await client.post("/payment/links", data, resourceId));
         case "get_link":
-          return json(await client.get(`/payment/links/${id}`));
+          return json(await client.get(`/payment/links/${id}`, resourceId));
         case "get_link_status":
-          return json(await client.get(`/payment/links/${id}/status`));
+          return json(await client.get(`/payment/links/${id}/status`, resourceId));
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -573,17 +597,18 @@ Actions:
     {
       action: z.enum(["create", "get", "delete"]).describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
       const id = data?.id as string | undefined;
       switch (action) {
         case "create":
-          return json(await client.post("/webhooks", data));
+          return json(await client.post("/webhooks", data, resourceId));
         case "get":
-          return json(await client.get(`/webhooks/${id}`));
+          return json(await client.get(`/webhooks/${id}`, resourceId));
         case "delete":
-          return json(await client.delete(`/webhooks/${id}`));
+          return json(await client.delete(`/webhooks/${id}`, resourceId));
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -631,7 +656,42 @@ Actions:
     }
   );
 
-  // ── 11. SANDBOX ──────────────────────────────────────────────────────
+  // ── 11. PARTNER (BACKWARD-COMPATIBILITY SHIM) ───────────────────────
+
+  server.tool(
+    "partner",
+    `Deprecated compatibility surface for older GreenInvoice MCP clients.
+
+Morning's public Partners API does not accept the normal business Bearer token: it uses separate partner Basic authentication. Its list response exposes masked identifiers/email addresses, not client API tokens, and an approved client's one-time API key is delivered to the partner callback URL for storage.
+
+Actions:
+"list" = safely list businesses already available to this business token via GET /businesses. Use the "business" tool for new integrations.
+"connect", "find", "disconnect" = return a migration explanation; these legacy actions cannot be performed correctly with business API credentials.`,
+    {
+      action: z.enum(["list", "connect", "find", "disconnect"]).describe("Legacy action to perform"),
+      data: z.string().optional().describe("Legacy JSON request parameters"),
+      resourceId: resourceIdInput,
+    },
+    async ({ action, resourceId }) => {
+      if (action === "list") {
+        return json({
+          deprecated: true,
+          migration: "Use business action=list, then pass the returned business UUID as resourceId on every scoped tool call.",
+          businesses: await client.get("/businesses", resourceId),
+        });
+      }
+
+      return json({
+        deprecated: true,
+        supported: false,
+        action,
+        migration:
+          "The public Partners API requires separate Basic partner credentials and callback-delivered client keys; normal Green Invoice business API credentials cannot safely perform this action. Use Morning's partner onboarding flow, or use business action=list for already-authorized businesses.",
+      });
+    }
+  );
+
+  // ── 12. SANDBOX ──────────────────────────────────────────────────────
 
   server.tool(
     "sandbox",
@@ -648,6 +708,7 @@ Actions:
 "list_businesses" = list all sandbox businesses available to the authenticated user, including invited client businesses (GET /businesses)
 "select_business" = select a sandbox client business for subsequent sandbox calls while keeping the same token (data: {"businessId":"..."}). Sends X-Resource-Id and verifies it with GET /businesses/me.
 "clear_business" = clear the selected sandbox business and return to the API key's default context
+"resourceId" (top-level tool argument) = use a sandbox business UUID for this call. Stateless clients must pass it again on every call.
 "create_test_document" = create a document from a minimal spec, filling in every required field. All arguments optional (data: {type (default 305), price (default 100), quantity (default 1), currency (default ILS), lang (default en), date (default today), dueDate, description, remarks, itemDescription, vatType, clientName (default "MCP Sandbox Test Client"), clientEmails:[], clientTaxId, addClient (default true — auto-creates the client), paymentType (default 4=Bank Transfer), paymentAmount}). Types 320/400/405 get a payment array automatically; its default is the line subtotal, which with vatType 0 leaves the document partially paid — pass paymentAmount to settle in full.
 "seed" = create one test document of each of types ${SEED_TYPES.join(", ")} in a single call, for populating an empty sandbox (data: {price, currency, clientName} — all optional, applied to every document). Returns a per-type result list including any failures.
 "create_document" = create a document from a full explicit payload, same shape as the 'document' tool's create action (data: {type, client:{...}, income:[...], payment:[...], ...}). No defaults are filled in.
@@ -664,8 +725,9 @@ Note: there is deliberately no "send" action — sandbox document emails would s
       action: z.enum(["status", "list_businesses", "select_business", "clear_business", "create_test_document", "seed", "create_document", "preview_document", "get_document", "search_documents", "download_links", "create_test_client", "search_clients", "request"])
         .describe("Action to perform"),
       data: z.string().optional().describe("JSON string of request parameters (see action descriptions)"),
+      resourceId: resourceIdInput,
     },
-    async ({ action, data: raw }) => {
+    async ({ action, data: raw, resourceId }) => {
       const data = parseData(raw) as Record<string, unknown> | undefined;
 
       if (!sandboxClient) {
@@ -693,12 +755,12 @@ Note: there is deliberately no "send" action — sandbox document emails would s
             configured: true,
             baseUrl: sb.base,
             sharedWithMainClient: sb === client,
-            selectedBusinessId: sb.resourceId,
+            selectedBusinessId: resourceId ?? sb.resourceId,
           };
           // /businesses/me is the liveness probe: it is the endpoint an API key
           // is always scoped for.
           try {
-            result.business = await sb.get("/businesses/me");
+            result.business = await sb.get("/businesses/me", resourceId);
             result.reachable = true;
           } catch (err) {
             result.reachable = false;
@@ -708,7 +770,7 @@ Note: there is deliberately no "send" action — sandbox document emails would s
           // at least some plans (verified against production 2026-07-25), so a
           // failure here says nothing about whether credentials are good.
           try {
-            result.account = await sb.get("/account/me");
+            result.account = await sb.get("/account/me", resourceId);
           } catch (err) {
             result.accountNote = `GET /account/me unavailable (${
               err instanceof Error ? err.message : String(err)
@@ -718,7 +780,7 @@ Note: there is deliberately no "send" action — sandbox document emails would s
         }
 
         case "list_businesses":
-          return json(await sb.get("/businesses"));
+          return json(await sb.get("/businesses", resourceId));
 
         case "select_business":
           return json(await selectBusiness(sb, data));
@@ -734,7 +796,7 @@ Note: there is deliberately no "send" action — sandbox document emails would s
 
         case "create_test_document": {
           const body = buildTestDocument(data ?? {});
-          return json({ sent: body, response: await sb.post("/documents", body) });
+          return json({ sent: body, response: await sb.post("/documents", body, resourceId) });
         }
 
         case "seed": {
@@ -742,7 +804,7 @@ Note: there is deliberately no "send" action — sandbox document emails would s
           for (const type of SEED_TYPES) {
             const body = buildTestDocument({ ...data, type });
             try {
-              results.push({ type, ok: true, response: await sb.post("/documents", body) });
+              results.push({ type, ok: true, response: await sb.post("/documents", body, resourceId) });
             } catch (err) {
               results.push({
                 type,
@@ -758,23 +820,23 @@ Note: there is deliberately no "send" action — sandbox document emails would s
         case "create_document": {
           const body = { ...data };
           delete body.id;
-          return json(await sb.post("/documents", body));
+          return json(await sb.post("/documents", body, resourceId));
         }
 
         case "preview_document": {
           const body = { ...data };
           delete body.id;
-          return json(await sb.post("/documents/preview", body));
+          return json(await sb.post("/documents/preview", body, resourceId));
         }
 
         case "get_document":
-          return json(await sb.get(`/documents/${id}`));
+          return json(await sb.get(`/documents/${id}`, resourceId));
 
         case "search_documents":
-          return json(await sb.post("/documents/search", data ?? {}));
+          return json(await sb.post("/documents/search", data ?? {}, resourceId));
 
         case "download_links":
-          return json(await sb.get(`/documents/${id}/download/links`));
+          return json(await sb.get(`/documents/${id}/download/links`, resourceId));
 
         case "create_test_client": {
           const body = {
@@ -784,18 +846,18 @@ Note: there is deliberately no "send" action — sandbox document emails would s
             ...data,
           };
           delete (body as Record<string, unknown>).id;
-          return json(await sb.post("/clients", body));
+          return json(await sb.post("/clients", body, resourceId));
         }
 
         case "search_clients":
-          return json(await sb.post("/clients/search", data ?? {}));
+          return json(await sb.post("/clients/search", data ?? {}, resourceId));
 
         case "request": {
           const method = String(data?.method ?? "GET").toUpperCase();
           const path = data?.path as string | undefined;
           if (!path) throw new Error("'path' is required for the request action, e.g. \"/items/search\"");
           if (!path.startsWith("/")) throw new Error(`'path' must start with '/': ${path}`);
-          return json(await sb.request(method, path, data?.body));
+          return json(await sb.request(method, path, data?.body, resourceId));
         }
 
         default:
