@@ -19,6 +19,14 @@ interface TokenCache {
 const BUSINESS_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function normalizeResourceId(resourceId: string): string {
+  const normalized = resourceId.trim();
+  if (!BUSINESS_ID_PATTERN.test(normalized)) {
+    throw new Error(`Invalid Green Invoice business ID: ${resourceId}`);
+  }
+  return normalized;
+}
+
 export class GreenInvoiceClient {
   private apiId: string;
   private apiSecret: string;
@@ -62,20 +70,24 @@ export class GreenInvoiceClient {
       return;
     }
 
-    const normalized = resourceId.trim();
-    if (!BUSINESS_ID_PATTERN.test(normalized)) {
-      throw new Error(`Invalid Green Invoice business ID: ${resourceId}`);
-    }
-    this.activeResourceId = normalized;
+    this.activeResourceId = normalizeResourceId(resourceId);
   }
 
-  private requestHeaders(token: string): Record<string, string> {
+  private requestHeaders(
+    token: string,
+    resourceIdOverride?: string | null
+  ): Record<string, string> {
+    const resourceId =
+      resourceIdOverride === undefined
+        ? this.activeResourceId
+        : resourceIdOverride === null
+          ? null
+          : normalizeResourceId(resourceIdOverride);
+
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      ...(this.activeResourceId
-        ? { "X-Resource-Id": this.activeResourceId }
-        : {}),
+      ...(resourceId ? { "X-Resource-Id": resourceId } : {}),
     };
   }
 
@@ -127,14 +139,15 @@ export class GreenInvoiceClient {
   async request(
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    resourceId?: string | null
   ): Promise<unknown> {
     await this.rateLimit();
     const token = await this.getToken();
 
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: this.requestHeaders(token),
+      headers: this.requestHeaders(token, resourceId),
       body: body ? JSON.stringify(body) : undefined,
     });
 
@@ -144,7 +157,7 @@ export class GreenInvoiceClient {
       const freshToken = await this.getToken();
       const retry = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: this.requestHeaders(freshToken),
+        headers: this.requestHeaders(freshToken, resourceId),
         body: body ? JSON.stringify(body) : undefined,
       });
 
@@ -167,19 +180,27 @@ export class GreenInvoiceClient {
     return res.text();
   }
 
-  async get(path: string): Promise<unknown> {
-    return this.request("GET", path);
+  async get(path: string, resourceId?: string | null): Promise<unknown> {
+    return this.request("GET", path, undefined, resourceId);
   }
 
-  async post(path: string, body?: unknown): Promise<unknown> {
-    return this.request("POST", path, body);
+  async post(
+    path: string,
+    body?: unknown,
+    resourceId?: string | null
+  ): Promise<unknown> {
+    return this.request("POST", path, body, resourceId);
   }
 
-  async put(path: string, body: unknown): Promise<unknown> {
-    return this.request("PUT", path, body);
+  async put(
+    path: string,
+    body: unknown,
+    resourceId?: string | null
+  ): Promise<unknown> {
+    return this.request("PUT", path, body, resourceId);
   }
 
-  async delete(path: string): Promise<unknown> {
-    return this.request("DELETE", path);
+  async delete(path: string, resourceId?: string | null): Promise<unknown> {
+    return this.request("DELETE", path, undefined, resourceId);
   }
 }

@@ -55,7 +55,11 @@ try {
   client.setResourceId(BUSINESS_A);
   await client.post("/documents/search", { page: 1 });
 
-  client.setResourceId(BUSINESS_B);
+  // Stateless MCP transports cannot rely on a prior `select` call. The
+  // resource must be carried by this request without changing the saved
+  // selection on a long-lived client.
+  await client.post("/documents/search", { page: 1 }, BUSINESS_B);
+
   await client.post("/documents/search", { page: 1 });
 
   client.setResourceId(null);
@@ -72,14 +76,19 @@ try {
     String(apiRequests[0]?.resourceId)
   );
   check(
-    "second request carries business B",
+    "explicit per-call override carries business B",
     apiRequests[1]?.resourceId === BUSINESS_B,
     String(apiRequests[1]?.resourceId)
   );
   check(
-    "cleared context omits X-Resource-Id",
-    apiRequests[2]?.resourceId === null,
+    "per-call override does not mutate saved selection",
+    apiRequests[2]?.resourceId === BUSINESS_A,
     String(apiRequests[2]?.resourceId)
+  );
+  check(
+    "cleared context omits X-Resource-Id",
+    apiRequests[3]?.resourceId === null,
+    String(apiRequests[3]?.resourceId)
   );
   check(
     "authorization remains unchanged",

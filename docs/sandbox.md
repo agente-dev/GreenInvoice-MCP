@@ -55,7 +55,7 @@ Two modes, in precedence order.
 
 ### Sandbox alongside production (recommended)
 
-Set a second key pair; the ten production tools stay on production and the
+Set a second key pair; the eleven production tools stay on production and the
 `sandbox` tool gets its own client:
 
 ```bash
@@ -89,7 +89,7 @@ its own absence beats a tool that silently isn't there.
 
 ## The `sandbox` tool
 
-One action-based tool, matching the convention of the other ten.
+One action-based tool, matching the convention of the other eleven.
 
 | Action | What it does |
 |--------|--------------|
@@ -119,11 +119,23 @@ the selected business with:
 X-Resource-Id: <business UUID>
 ```
 
-The MCP stores that selection independently on its production and sandbox
-clients and applies the header to subsequent authenticated requests, including
-the retry after a token refresh. Selecting a business first probes
+Every authenticated MCP tool accepts a top-level `resourceId`. That is the
+reliable contract for stateless transports: pass the business UUID on every
+call and the server applies it only to that HTTP request, including a retry
+after token refresh. It does not require a previous MCP call to remain alive:
+
+```json
+{
+  "action": "search_documents",
+  "data": "{\"page\":1,\"pageSize\":25}",
+  "resourceId": "00000000-0000-0000-0000-000000000000"
+}
+```
+
+Long-lived MCP sessions may also store a selection independently on the
+production and sandbox clients. Selecting a business first probes
 `GET /businesses/me`; if the business is inaccessible, the previous selection
-is restored.
+is restored. That in-memory selection does not survive a process restart.
 
 This is an observed web-application behavior, not a header described in
 Morning's current public API reference. A read-only sandbox check on 2026-07-29
