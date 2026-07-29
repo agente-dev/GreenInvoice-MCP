@@ -5,8 +5,8 @@
  * Not affiliated with or endorsed by Green Invoice.
  */
 
-const PRODUCTION_BASE = "https://api.greeninvoice.co.il/api/v1";
-const SANDBOX_BASE = "https://sandbox.d.greeninvoice.co.il/api/v1";
+export const PRODUCTION_BASE = "https://api.greeninvoice.co.il/api/v1";
+export const SANDBOX_BASE = "https://sandbox.d.greeninvoice.co.il/api/v1";
 
 const TOKEN_TTL_MS = 25 * 60 * 1000; // 25 minutes (tokens last ~30 min)
 const MIN_REQUEST_INTERVAL_MS = 350; // ~3 req/s rate limit
@@ -16,17 +16,67 @@ interface TokenCache {
   obtainedAt: number;
 }
 
+const BUSINESS_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class GreenInvoiceClient {
   private apiId: string;
   private apiSecret: string;
   private baseUrl: string;
   private tokenCache: TokenCache | null = null;
   private lastRequestTime = 0;
+  private activeResourceId: string | null = null;
+
+  readonly sandbox: boolean;
 
   constructor(apiId: string, apiSecret: string, sandbox = false) {
     this.apiId = apiId;
     this.apiSecret = apiSecret;
+    this.sandbox = sandbox;
     this.baseUrl = sandbox ? SANDBOX_BASE : PRODUCTION_BASE;
+  }
+
+  /** Which environment this client is bound to. Fixed at construction. */
+  get environment(): "sandbox" | "production" {
+    return this.sandbox ? "sandbox" : "production";
+  }
+
+  get base(): string {
+    return this.baseUrl;
+  }
+
+  /**
+   * Business selected for subsequent API calls.
+   *
+   * Morning's representative UI keeps the same authorization token when a CPA
+   * switches to an invited client business and sends the selected business UUID
+   * in X-Resource-Id.
+   */
+  get resourceId(): string | null {
+    return this.activeResourceId;
+  }
+
+  setResourceId(resourceId: string | null): void {
+    if (resourceId === null) {
+      this.activeResourceId = null;
+      return;
+    }
+
+    const normalized = resourceId.trim();
+    if (!BUSINESS_ID_PATTERN.test(normalized)) {
+      throw new Error(`Invalid Green Invoice business ID: ${resourceId}`);
+    }
+    this.activeResourceId = normalized;
+  }
+
+  private requestHeaders(token: string): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(this.activeResourceId
+        ? { "X-Resource-Id": this.activeResourceId }
+        : {}),
+    };
   }
 
   private async rateLimit(): Promise<void> {
@@ -84,10 +134,7 @@ export class GreenInvoiceClient {
 
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: this.requestHeaders(token),
       body: body ? JSON.stringify(body) : undefined,
     });
 
@@ -97,10 +144,7 @@ export class GreenInvoiceClient {
       const freshToken = await this.getToken();
       const retry = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${freshToken}`,
-        },
+        headers: this.requestHeaders(freshToken),
         body: body ? JSON.stringify(body) : undefined,
       });
 

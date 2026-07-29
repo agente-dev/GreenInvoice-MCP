@@ -1,6 +1,6 @@
 {
   "name": "greeninvoice-mcp",
-  "version": "0.2.2",
+  "version": "0.3.1",
   "description": "Unofficial MCP (Model Context Protocol) server for the Green Invoice API. Not affiliated with or endorsed by Green Invoice.",
   "keywords": [
     "mcp",
@@ -26,12 +26,14 @@
   },
   "files": [
     "dist",
+    "docs",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "build:bundle": "tsup",
+    "check": "npm run build && node scripts/check-test-payloads.mjs && node scripts/check-resource-switch.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build"
