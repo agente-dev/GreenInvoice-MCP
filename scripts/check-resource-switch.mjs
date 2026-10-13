@@ -13,20 +13,36 @@ import { GreenInvoiceClient } from "../dist/client.js";
 const BUSINESS_A = "11111111-1111-4111-8111-111111111111";
 const BUSINESS_B = "22222222-2222-4222-8222-222222222222";
 const originalFetch = globalThis.fetch;
+const originalAuthMode = process.env.GREENINVOICE_AUTH_MODE;
+const originalTokenUrl = process.env.GREENINVOICE_TOKEN_URL;
+process.env.GREENINVOICE_AUTH_MODE = "oauth";
+delete process.env.GREENINVOICE_TOKEN_URL;
 const requests = [];
 let authCalls = 0;
 
 globalThis.fetch = async (url, options = {}) => {
+  const requestUrl = String(url);
   const headers = new Headers(options.headers);
   requests.push({
-    url: String(url),
+    url: requestUrl,
     authorization: headers.get("Authorization"),
     resourceId: headers.get("X-Resource-Id"),
   });
 
-  if (String(url).endsWith("/account/token")) {
+  if (requestUrl.endsWith("/idp/v1/oauth/token")) {
     authCalls++;
-    return new Response(JSON.stringify({ token: "sandbox-test-token" }), {
+    return new Response(JSON.stringify({
+      accessToken: "sandbox-test-token",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (requestUrl.endsWith("/account/token")) {
+    authCalls++;
+    return new Response(JSON.stringify({ token: "legacy-test-token" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -66,7 +82,9 @@ try {
   await client.post("/documents/search", { page: 1 });
 
   const apiRequests = requests.filter(
-    (request) => !request.url.endsWith("/account/token")
+    (request) =>
+      !request.url.endsWith("/account/token") &&
+      !request.url.endsWith("/idp/v1/oauth/token")
   );
 
   check("one token is reused across business switches", authCalls === 1);
@@ -110,6 +128,10 @@ try {
   check("invalid business IDs are rejected", invalidRejected);
 } finally {
   globalThis.fetch = originalFetch;
+  if (originalAuthMode === undefined) delete process.env.GREENINVOICE_AUTH_MODE;
+  else process.env.GREENINVOICE_AUTH_MODE = originalAuthMode;
+  if (originalTokenUrl === undefined) delete process.env.GREENINVOICE_TOKEN_URL;
+  else process.env.GREENINVOICE_TOKEN_URL = originalTokenUrl;
 }
 
 console.log(

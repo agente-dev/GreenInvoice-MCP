@@ -33,6 +33,7 @@
   "scripts": {
     "build": "tsc",
     "build:bundle": "tsup",
+    "test": "node --experimental-strip-types --test",
     "check": "npm run build && node scripts/check-test-payloads.mjs && node scripts/check-resource-switch.mjs && node scripts/check-tool-contract.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
